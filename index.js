@@ -1,7 +1,16 @@
-import { 
-  Client, GatewayIntentBits, Partials, REST, Routes, 
-  SlashCommandBuilder, PermissionFlagsBits, 
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder 
+import {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+  StringSelectMenuBuilder,
 } from 'discord.js';
 
 const client = new Client({
@@ -13,26 +22,28 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
+// تخزين الرسائل المحددة
 const selectedMessages = new Map(); 
-let adminRoleId = null; // الرول المخصص للبوت
+// تخزين رول الادمن للبوت
+let botAdminRoles = new Map(); // key: guildId, value: roleId
+// تعطيل الأوامر
+let disabledCommands = new Map(); // key: guildId, value: true/false
 
-// ================ تسجيل الأوامر ================
+// تسجيل الاوامر
 const commands = [
   new SlashCommandBuilder()
     .setName('thd')
     .setDescription('تحديد رسالة باستخدام المنشن')
-    .addUserOption(option => option.setName('user').setDescription('العضو').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
-  
+    .addUserOption(option => option.setName('user').setDescription('العضو').setRequired(true)),
+
   new SlashCommandBuilder()
     .setName('thd1')
     .setDescription('تحديد عدد من الرسائل')
-    .addIntegerOption(option => option.setName('count').setDescription('عدد الرسائل').setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+    .addIntegerOption(option => option.setName('count').setDescription('عدد الرسائل').setRequired(true)),
 
   new SlashCommandBuilder()
     .setName('clean')
-    .setDescription('حذف الرسائل المحددة'),
+    .setDescription('حذف الرسائل المحددة مسبقًا'),
 
   new SlashCommandBuilder()
     .setName('cleanedall')
@@ -40,79 +51,83 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('messagecounter')
-    .setDescription('يحسب عدد الرسائل في القناة'),
+    .setDescription('يحسب عدد كل الرسائل في القناة'),
 
   new SlashCommandBuilder()
     .setName('menubot')
-    .setDescription('📌 فتح منيو التحكم للبوت'),
+    .setDescription('منيو تحكم البوت')
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
   try {
-    console.log('⚡️ Started refreshing application (/) commands.');
-    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
-    console.log('✅ Successfully reloaded application (/) commands.');
+    await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID),
+      { body: commands }
+    );
+    console.log('✅ Slash commands تم رفعها بنجاح');
   } catch (error) {
     console.error(error);
   }
 })();
 
-// ================ حماية البوت (أونر + أدمن) ================
-function canUseBot(interaction) {
-  const isOwner = interaction.guild.ownerId === interaction.user.id;
-  const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
-  const hasCustomRole = adminRoleId && interaction.member.roles.cache.has(adminRoleId);
-  return isOwner || isAdmin || hasCustomRole;
+function hasAccess(interaction, needOwner = false) {
+  const member = interaction.member;
+  const guildId = interaction.guildId;
+  const adminRole = botAdminRoles.get(guildId);
+
+  if (needOwner) {
+    return member.roles.cache.some(r => r.name.toLowerCase().includes("owner"));
+  }
+
+  return member.permissions.has(PermissionFlagsBits.Administrator) ||
+    (adminRole && member.roles.cache.has(adminRole));
 }
 
-// ================ الأحداث ================
 client.on('interactionCreate', async interaction => {
   if (interaction.isChatInputCommand()) {
-    if (!canUseBot(interaction)) {
-      return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام البوت', ephemeral: true });
-    }
-
     const guildId = interaction.guildId;
 
-    // thd
+    if (disabledCommands.get(guildId)) {
+      return interaction.reply({ content: "⚠️ الأوامر معطلة حالياً من قبل الإدارة", ephemeral: true });
+    }
+
+    // اوامر الحذف والعد
+    if (['thd','thd1','clean','cleanedall','messagecounter'].includes(interaction.commandName)) {
+      if (!hasAccess(interaction)) {
+        return interaction.reply({ content: "❌ ما عندك صلاحية تستخدم هذا الأمر", ephemeral: true });
+      }
+    }
+
     if (interaction.commandName === 'thd') {
       const user = interaction.options.getUser('user');
       const messages = await interaction.channel.messages.fetch({ limit: 100 });
       const msg = messages.find(m => m.author.id === user.id);
-      if (!msg) return interaction.reply({ content: '❌ ما تم العثور على رسالة لهذا العضو', ephemeral: true });
-      
+      if (!msg) return interaction.reply({ content: '❌ ما تم العثور على رسالة', ephemeral: true });
       if (!selectedMessages.has(guildId)) selectedMessages.set(guildId, []);
       selectedMessages.get(guildId).push(msg.id);
-      
-      interaction.reply({ content: `✅ تم تحديد الرسالة من ${user.username}`, ephemeral: true });
+      interaction.reply({ content: `✅ تم تحديد الرسالة من ${user.username}` });
     }
 
-    // thd1
     if (interaction.commandName === 'thd1') {
       const count = interaction.options.getInteger('count');
       const messages = await interaction.channel.messages.fetch({ limit: count });
       if (!selectedMessages.has(guildId)) selectedMessages.set(guildId, []);
       selectedMessages.get(guildId).push(...messages.map(m => m.id));
-      
-      interaction.reply({ content: `✅ تم تحديد ${count} رسالة`, ephemeral: true });
+      interaction.reply({ content: `✅ تم تحديد ${count} رسالة` });
     }
 
-    // clean
     if (interaction.commandName === 'clean') {
       const ids = selectedMessages.get(guildId) || [];
       if (ids.length === 0) return interaction.reply({ content: '❌ لا يوجد رسائل محددة', ephemeral: true });
-
       const messages = await interaction.channel.messages.fetch({ limit: 100 });
       const toDelete = messages.filter(m => ids.includes(m.id));
       await interaction.channel.bulkDelete(toDelete, true);
-
       selectedMessages.set(guildId, []);
       interaction.reply({ content: '✅ تم حذف الرسائل المحددة' });
     }
 
-    // cleanedall
     if (interaction.commandName === 'cleanedall') {
       let lastId;
       while (true) {
@@ -127,7 +142,6 @@ client.on('interactionCreate', async interaction => {
       interaction.reply({ content: '✅ تم حذف كل الرسائل في القناة' });
     }
 
-    // messagecounter
     if (interaction.commandName === 'messagecounter') {
       let allMessages = [];
       let lastId;
@@ -139,62 +153,129 @@ client.on('interactionCreate', async interaction => {
         if (messages.size !== 100) break;
         lastId = messages.last().id;
       }
-      interaction.reply({ content: `📊 عدد كل الرسائل في القناة: ${allMessages.length}`, ephemeral: true });
+      interaction.reply({ content: `📊 عدد كل الرسائل في القناة: ${allMessages.length}` });
     }
 
-    // menubot
     if (interaction.commandName === 'menubot') {
+      if (!hasAccess(interaction)) {
+        return interaction.reply({ content: "❌ ما عندك صلاحية تفتح المنيو", ephemeral: true });
+      }
       const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('addRole').setLabel('➕ إضافة رول للبوت').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId('rights').setLabel('📜 الحقوق').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('addRole').setLabel('➕ إضافة رول تحكم').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('rights').setLabel('👤 حقوق البوت').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('rate').setLabel('⭐ تقييم البوت').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('botInfo').setLabel('ℹ️ معلومات البوت').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('serverInfo').setLabel('📊 حالة السيرفر').setStyle(ButtonStyle.Secondary)
       );
-
-      await interaction.reply({ content: '📌 منيو التحكم:', components: [row], ephemeral: true });
+      const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('restart').setLabel('🔄 إعادة تشغيل البوت').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('toggleCommands').setLabel('⛔ تعطيل/تفعيل الأوامر').setStyle(ButtonStyle.Secondary)
+      );
+      interaction.reply({ content: "📋 منيو تحكم البوت", components: [row,row2] });
     }
   }
 
-  // ========== الأزرار ==========
+  // ازرار
   if (interaction.isButton()) {
-    if (interaction.customId === 'rights') {
-      await interaction.reply({ 
-        content: `👑 الحقوق:\nالاسم: رائد المطيري\nيوزر: @_r10d\nسيرفري: https://discord.gg/qcYnSujM5H`, 
-        ephemeral: true 
-      });
-    }
+    const guildId = interaction.guildId;
 
     if (interaction.customId === 'addRole') {
-      await interaction.reply({ content: '🔹 ارسل ايدي الرول الآن لإضافته كمشرف للبوت.', ephemeral: true });
-      const filter = m => m.author.id === interaction.user.id;
-      const collector = interaction.channel.createMessageCollector({ filter, time: 30000, max: 1 });
+      if (!hasAccess(interaction, true)) {
+        return interaction.reply({ content: "❌ فقط الـ Owner يقدر يضيف رول تحكم", ephemeral: true });
+      }
+      const menu = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('selectRole')
+          .setPlaceholder('اختر رول للتحكم بالبوت')
+          .addOptions(interaction.guild.roles.cache.map(role => ({
+            label: role.name, value: role.id
+          })))
+      );
+      return interaction.reply({ content: "🎭 اختر الرول:", components: [menu], ephemeral: true });
+    }
 
-      collector.on('collect', m => {
-        adminRoleId = m.content.trim();
-        m.reply(`✅ تم تعيين الرول (${adminRoleId}) كمشرف للبوت`);
+    if (interaction.customId === 'rights') {
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setTitle("حقوق البوت")
+          .setDescription("👤 رائد المطيري\n📱 يوزر: @_r10d\n🔗 [اضغط هنا للدخول السيرفر](https://discord.gg/qcYnSujM5H)")
+          .setColor(0x00AEFF)
+        ],
+        ephemeral: true
       });
     }
 
     if (interaction.customId === 'rate') {
-      const menu = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId('rateMenu')
-          .setPlaceholder('اختر عدد النجوم')
-          .addOptions(
-            [1, 2, 3, 4, 5].map(n => ({ label: `${n} ⭐`, value: n.toString() }))
-          )
+      const row = new ActionRowBuilder().addComponents(
+        [1,2,3,4,5].map(num =>
+          new ButtonBuilder().setCustomId(`rate_${num}`).setLabel(`${num}⭐`).setStyle(ButtonStyle.Secondary)
+        )
       );
-      await interaction.reply({ content: '🌟 اختر تقييمك:', components: [menu], ephemeral: true });
+      return interaction.reply({ content: "اختر تقييمك للبوت:", components: [row], ephemeral: true });
+    }
+
+    if (interaction.customId.startsWith('rate_')) {
+      const stars = interaction.customId.split('_')[1];
+      await interaction.reply({ content: `✨ شكرا لك لتقييمك ${stars}⭐`, ephemeral: true });
+      const logChannel = interaction.guild.systemChannel || interaction.channel;
+      logChannel.send(`📢 ${interaction.user.username} (${interaction.user.id}) قيم البوت: ${stars}⭐`);
+    }
+
+    if (interaction.customId === 'botInfo') {
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setTitle("معلومات البوت")
+          .addFields(
+            { name: "👾 اسم البوت", value: client.user.tag, inline: true },
+            { name: "🌐 عدد السيرفرات", value: `${client.guilds.cache.size}`, inline: true },
+            { name: "📡 البنق", value: `${client.ws.ping}ms`, inline: true }
+          )
+          .setColor(0x5865F2)
+        ],
+        ephemeral: true
+      });
+    }
+
+    if (interaction.customId === 'serverInfo') {
+      const guild = interaction.guild;
+      const online = guild.members.cache.filter(m => m.presence?.status === 'online').size;
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setTitle(`📊 حالة السيرفر: ${guild.name}`)
+          .addFields(
+            { name: "👥 عدد الأعضاء", value: `${guild.memberCount}`, inline: true },
+            { name: "🟢 المتصلين الآن", value: `${online}`, inline: true },
+            { name: "📁 عدد الرومات", value: `${guild.channels.cache.size}`, inline: true }
+          )
+          .setColor(0x2ECC71)
+        ],
+        ephemeral: true
+      });
+    }
+
+    if (interaction.customId === 'restart') {
+      if (!hasAccess(interaction, true)) {
+        return interaction.reply({ content: "❌ فقط الـ Owner يقدر يعيد تشغيل البوت", ephemeral: true });
+      }
+      await interaction.reply({ content: "🔄 جاري إعادة تشغيل البوت...", ephemeral: true });
+      process.exit(0);
+    }
+
+    if (interaction.customId === 'toggleCommands') {
+      if (!hasAccess(interaction)) {
+        return interaction.reply({ content: "❌ ما عندك صلاحية", ephemeral: true });
+      }
+      const current = disabledCommands.get(guildId) || false;
+      disabledCommands.set(guildId, !current);
+      interaction.reply({ content: current ? "✅ تم تفعيل الأوامر" : "⛔ تم تعطيل الأوامر", ephemeral: true });
     }
   }
 
-  // ========== القائمة (التقييم) ==========
-  if (interaction.isStringSelectMenu() && interaction.customId === 'rateMenu') {
-    const stars = interaction.values[0];
-    await interaction.reply({ content: `✨ شكراً لك على تقييمك (${stars} ⭐)`, ephemeral: true });
-
-    // يرسل لك بالخاص اسم + يوزر + عدد النجوم
-    const owner = await client.users.fetch(process.env.OWNER_ID); 
-    owner.send(`📢 ${interaction.user.username} (${interaction.user.tag}) قيم البوت: ${stars} ⭐`);
+  // تحديد رول
+  if (interaction.isStringSelectMenu() && interaction.customId === 'selectRole') {
+    const roleId = interaction.values[0];
+    botAdminRoles.set(interaction.guildId, roleId);
+    interaction.reply({ content: `✅ تم تعيين رول ${interaction.guild.roles.cache.get(roleId).name} كـ رول تحكم للبوت`, ephemeral: true });
   }
 });
 
