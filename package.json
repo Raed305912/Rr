@@ -2,10 +2,14 @@
   "name": "reaction-bot",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
