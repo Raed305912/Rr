@@ -1,6 +1,6 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+import { Client, GatewayIntentBits } from 'discord.js';
 
-// إنشاء كائن البوت مع النوايا المطلوبة
+// إنشاء البوت مع النوايا المطلوبة
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -27,10 +27,11 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// تسجيل الدخول باستخدام متغير البيئة
+// التحقق من وجود توكن البوت
 if (!process.env.DISCORD_TOKEN) {
     console.error('❌ Error: DISCORD_TOKEN not found!');
     process.exit(1);
 }
 
+// تسجيل الدخول
 client.login(process.env.DISCORD_TOKEN);
