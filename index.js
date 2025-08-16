@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Partials, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import 'dotenv/config';
+
 
 const client = new Client({
   intents: [
