@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Partials, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-
+import 'dotenv/config';
 
 const client = new Client({
   intents: [
@@ -35,7 +35,11 @@ const commands = [
   new SlashCommandBuilder()
     .setName('cleanedall')
     .setDescription('حذف كل الرسائل في القناة')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+
+  new SlashCommandBuilder()
+    .setName('messagecounter')
+    .setDescription('يحسب عدد كل الرسائل في القناة')
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -88,14 +92,38 @@ client.on('interactionCreate', async interaction => {
     await interaction.channel.bulkDelete(toDelete, true);
 
     selectedMessages.set(guildId, []); // مسح التخزين بعد الحذف
-    interaction.reply({ content: '✅ تم حذف الرسائل المحددة\nحقوق السيرفر', ephemeral: false });
+    interaction.reply({ content: '✅ تم حذف الرسائل المحددة ', ephemeral: false });
   }
 
   if (interaction.commandName === 'cleanedall') {
-    const messages = await interaction.channel.messages.fetch({ limit: 100 });
-    await interaction.channel.bulkDelete(messages, true);
+    let lastId;
+    while (true) {
+      const options = { limit: 100 };
+      if (lastId) options.before = lastId;
+      const messages = await interaction.channel.messages.fetch(options);
+      if (messages.size === 0) break;
+      await interaction.channel.bulkDelete(messages, true);
+      lastId = messages.last().id;
+    }
     selectedMessages.set(guildId, []); // مسح التخزين بعد الحذف
     interaction.reply({ content: '✅ تم حذف كل الرسائل في القناة\nحقوق السيرفر', ephemeral: false });
+  }
+
+  if (interaction.commandName === 'messagecounter') {
+    let allMessages = [];
+    let lastId;
+    while (true) {
+      const options = { limit: 100 };
+      if (lastId) options.before = lastId;
+
+      const messages = await interaction.channel.messages.fetch(options);
+      allMessages = allMessages.concat(Array.from(messages.values()));
+      
+      if (messages.size !== 100) break;
+      lastId = messages.last().id;
+    }
+
+    interaction.reply({ content: `📊 عدد كل الرسائل في القناة: ${allMessages.length}`, ephemeral: true });
   }
 });
 
