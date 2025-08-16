@@ -1,5 +1,5 @@
 import { Client, GatewayIntentBits, Partials, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import 'dotenv/config';
+
 
 const client = new Client({
   intents: [
@@ -106,7 +106,7 @@ client.on('interactionCreate', async interaction => {
       lastId = messages.last().id;
     }
     selectedMessages.set(guildId, []); // مسح التخزين بعد الحذف
-    interaction.reply({ content: '✅ تم حذف كل الرسائل في القناة\nحقوق السيرفر', ephemeral: false });
+    interaction.reply({ content: '✅ تم حذف كل الرسائل في القناة ', ephemeral: false });
   }
 
   if (interaction.commandName === 'messagecounter') {
