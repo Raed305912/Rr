@@ -1,105 +1,102 @@
-import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
+import 'dotenv/config';
 
-// إنشاء البوت مع النوايا المطلوبة
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
-  ]
+  ],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
-// آي دي الأشخاص المسموح لهم لميزة الرياكشن
-const owners = ['1079022798523093032', '879476597927837816'];
-// آي دي القنوات المسموح فيها للرياكشن
-const allowedChannels = ['1406085179617054802', '1404168132054093956', '1404169419353227335'];
-// الإيموجيات اللي البوت يضيفها
-const emojis = ['👍', '❤️', '😂', '😮', '🔥'];
+// تخزين الرسائل المحددة
+const selectedMessages = new Map(); // key: guildId, value: array of message IDs
 
-// قائمة احتياطية لميمز لو الـ API تعطّل
-const fallbackMemes = [
-  'https://i.imgur.com/6XjK8.png',
-  'https://i.imgur.com/4M7IWwP.jpeg',
-  'https://i.imgur.com/o7P2i9G.jpeg',
-  'https://i.imgur.com/0rW3Z1N.jpeg',
-  'https://i.imgur.com/1N3bY5C.jpeg'
-];
+// تسجيل الـ Slash Commands
+const commands = [
+  new SlashCommandBuilder()
+    .setName('thd')
+    .setDescription('تحديد رسالة باستخدام المنشن')
+    .addUserOption(option => option.setName('user').setDescription('العضو الذي تريد تحديد رسالته').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+  
+  new SlashCommandBuilder()
+    .setName('thd1')
+    .setDescription('تحديد عدد من الرسائل')
+    .addIntegerOption(option => option.setName('count').setDescription('عدد الرسائل لتحديدها').setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 
-// كولداون بسيط عشان ما ينSpam الأمر
-const cooldown = new Map(); // key: userId, val: timestamp
-const MEME_COOLDOWN_MS = 5000; // 5 ثواني
+  new SlashCommandBuilder()
+    .setName('clean')
+    .setDescription('حذف الرسائل المحددة مسبقًا')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 
-client.on('messageCreate', async (message) => {
-  // تجاهل رسائل البوت
-  if (message.author.bot) return;
+  new SlashCommandBuilder()
+    .setName('cleanedall')
+    .setDescription('حذف كل الرسائل في القناة')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+].map(cmd => cmd.toJSON());
 
-  // ===== ميزة الرياكشن القديمة =====
+const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+
+(async () => {
   try {
-    if (owners.includes(message.author.id) && allowedChannels.includes(message.channel.id)) {
-      for (const emoji of emojis) {
-        await message.react(emoji).catch(() => {});
-      }
-    }
-  } catch (e) {
-    console.error('Reaction error:', e);
+    console.log('⚡️ Started refreshing application (/) commands.');
+    await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID),
+      { body: commands }
+    );
+    console.log('✅ Successfully reloaded application (/) commands.');
+  } catch (error) {
+    console.error(error);
+  }
+})();
+
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+
+  const guildId = interaction.guildId;
+
+  if (interaction.commandName === 'thd') {
+    const user = interaction.options.getUser('user');
+    const messages = await interaction.channel.messages.fetch({ limit: 100 });
+    const msg = messages.find(m => m.author.id === user.id);
+    if (!msg) return interaction.reply({ content: '❌ ما تم العثور على رسالة لهذا العضو', ephemeral: true });
+    
+    if (!selectedMessages.has(guildId)) selectedMessages.set(guildId, []);
+    selectedMessages.get(guildId).push(msg.id);
+    
+    interaction.reply({ content: `✅ تم تحديد الرسالة من ${user.username}`, ephemeral: true });
   }
 
-  // ===== أمر !ميم =====
-  try {
-    if (message.content.trim().toLowerCase().startsWith('!ميم')) {
-      // تحقّق الكولداون
-      const now = Date.now();
-      const last = cooldown.get(message.author.id) || 0;
-      if (now - last < MEME_COOLDOWN_MS) {
-        const waitSec = Math.ceil((MEME_COOLDOWN_MS - (now - last)) / 1000);
-        return message.reply(`⏳ جرب بعد ${waitSec} ثانية.`);
-      }
-      cooldown.set(message.author.id, now);
+  if (interaction.commandName === 'thd1') {
+    const count = interaction.options.getInteger('count');
+    const messages = await interaction.channel.messages.fetch({ limit: count });
+    if (!selectedMessages.has(guildId)) selectedMessages.set(guildId, []);
+    selectedMessages.get(guildId).push(...messages.map(m => m.id));
+    
+    interaction.reply({ content: `✅ تم تحديد ${count} رسالة`, ephemeral: true });
+  }
 
-      // حاول تجيب ميم من الـ API
-      let memeTitle = 'ميم عشوائي';
-      let memeImg = null;
-      let memePost = null;
+  if (interaction.commandName === 'clean') {
+    const ids = selectedMessages.get(guildId) || [];
+    if (ids.length === 0) return interaction.reply({ content: '❌ لا يوجد رسائل محددة للحذف', ephemeral: true });
 
-      try {
-        // Node 18 فيه fetch مدمج
-        const res = await fetch('https://meme-api.com/gimme');
-        if (res.ok) {
-          const data = await res.json();
-          // الحقلين الشائعة: title, url, postLink
-          memeTitle = data.title || memeTitle;
-          memeImg = data.url || null;
-          memePost = data.postLink || null;
-        }
-      } catch {
-        // تجاهل، بنستخدم احتياطي تحت
-      }
+    const messages = await interaction.channel.messages.fetch({ limit: 100 });
+    const toDelete = messages.filter(m => ids.includes(m.id));
+    await interaction.channel.bulkDelete(toDelete, true);
 
-      // لو ما جاب صورة من API، استخدم احتياطي
-      if (!memeImg) {
-        memeImg = fallbackMemes[Math.floor(Math.random() * fallbackMemes.length)];
-      }
+    selectedMessages.set(guildId, []); // مسح التخزين بعد الحذف
+    interaction.reply({ content: '✅ تم حذف الرسائل المحددة\nحقوق السيرفر', ephemeral: false });
+  }
 
-      const embed = new EmbedBuilder()
-        .setTitle(memeTitle)
-        .setImage(memeImg)
-        .setFooter({ text: '😄 طلب: !ميم' });
-
-      if (memePost) embed.setURL(memePost);
-
-      await message.channel.send({ embeds: [embed] });
-    }
-  } catch (e) {
-    console.error('Meme command error:', e);
-    await message.reply('❌ صار خطأ أثناء جلب الميم. جرب مرة ثانية.');
+  if (interaction.commandName === 'cleanedall') {
+    const messages = await interaction.channel.messages.fetch({ limit: 100 });
+    await interaction.channel.bulkDelete(messages, true);
+    selectedMessages.set(guildId, []); // مسح التخزين بعد الحذف
+    interaction.reply({ content: '✅ تم حذف كل الرسائل في القناة\nحقوق السيرفر', ephemeral: false });
   }
 });
 
-// التحقق من وجود توكن البوت
-if (!process.env.DISCORD_TOKEN) {
-  console.error('❌ Error: DISCORD_TOKEN not found!');
-  process.exit(1);
-}
-
-// تسجيل الدخول
 client.login(process.env.DISCORD_TOKEN);
